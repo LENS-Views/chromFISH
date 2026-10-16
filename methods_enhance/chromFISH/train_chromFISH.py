@@ -1,14 +1,15 @@
 """我们自己的模型(SwinMatrixTransformer)的统一配置训练。
 
 复用 model/src/matrix_transform 的全部组件: 数据管线、损失、优化器调度、train_one_epoch、
-evaluate —— 模型与损失一行不改。只把训练设置对齐到 common.py 的统一口径:
-    batch_size 32 与 epochs 100 本来就一致 —— 统一口径正是取自这里, 所以本文件只加日志。
+evaluate —— 模型与损失保持不变。训练设置对齐到 common.py 的统一口径，并保存每次运行的
+有效配置、归一化统计和实验标识，确保 checkpoint 与评估配置可以追溯。
 
-原版 model/scripts/train.py 的 epoch 数写在 config 里; 这里用命令行覆盖, 不改编排。
+原版 model/scripts/train.py 的 epoch 数写在 config 里; 这里允许命令行覆盖。
 """
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -41,16 +42,31 @@ def main() -> None:
     ap.add_argument("--batch-size", type=int, default=common.BATCH_SIZE)
     ap.add_argument("--epochs", type=int, default=common.EPOCHS)
     ap.add_argument("--device", default=None)
+    ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--experiment-id", default=None)
     ap.add_argument("--out-dir", required=True)
     args = ap.parse_args()
     common.EPOCHS = args.epochs
 
     config = load_config(args.config)
+    out_dir = Path(args.out_dir)
+    experiment_id = args.experiment_id or out_dir.name
+    config.output_dir = str(out_dir)
     config.data.batch_size = args.batch_size
     config.data.source_filename = f"dawn_sampled_{args.reads}.npy"
+    config.training.epochs = args.epochs
+    if args.device is not None:
+        config.device = args.device
+    if args.seed is not None:
+        config.seed = args.seed
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "config.json").write_text(
+        json.dumps(config.to_dict(), indent=2), encoding="utf-8"
+    )
 
     seed_everything(config.seed)
-    device = resolve_device(args.device or config.device)
+    device = resolve_device(config.device)
     print(f"device={device}  reads={args.reads}  {args.epochs} epoch x "
           f"{common.STEPS_PER_EPOCH} 步 = {args.epochs * common.STEPS_PER_EPOCH:,} 步")
 
@@ -60,6 +76,7 @@ def main() -> None:
         "matrix_size": config.data.matrix_size,
     }
     train_dataset, stats = MatrixDataset.training_dataset(config.data.train_dir, **dataset_args)
+    stats.save(out_dir / "normalization.json")
     valid_dataset = MatrixDataset(config.data.valid_dir, stats=stats, **dataset_args)
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,
@@ -77,8 +94,9 @@ def main() -> None:
     amp_enabled = config.training.amp and device.type == "cuda"
     scaler = GradScaler("cuda", enabled=amp_enabled)
 
-    logger = common.RunLogger(args.out_dir, "chromFISH")
+    logger = common.RunLogger(out_dir, "chromFISH")
     best_score = float("-inf")
+    best_epoch = 0
 
     for epoch in range(1, args.epochs + 1):
         logger.begin_epoch(epoch)
@@ -97,15 +115,53 @@ def main() -> None:
         score = metrics["ssim"] + metrics["pcc"]
         if score > best_score:
             best_score = score
-            torch.save({"epoch": epoch, "model_state_dict": model.state_dict(),
-                        "metrics": metrics, "score": score},
-                       Path(args.out_dir) / "best.pt")
+            best_epoch = epoch
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model_state_dict": model.state_dict(),
+                    "metrics": metrics,
+                    "score": score,
+                    "config": config.to_dict(),
+                    "experiment_id": experiment_id,
+                },
+                out_dir / "best.pt",
+            )
 
-    common.print_report(
-        logger.write_report(model, args.batch_size, device,
-                            extra={"reads": args.reads, "best_score": round(best_score, 4)}))
-    torch.save({"epoch": args.epochs, "model_state_dict": model.state_dict()},
-               Path(args.out_dir) / "final.pt")
+    ablation_switches = {
+        "use_shifted_windows": config.model.use_shifted_windows,
+        "use_relative_position_bias": config.model.use_relative_position_bias,
+        "use_rstb_residual": config.model.use_rstb_residual,
+        "use_long_skip": config.model.use_long_skip,
+        "use_reconstruction_head": config.model.use_reconstruction_head,
+    }
+    report = logger.write_report(
+        model,
+        args.batch_size,
+        device,
+        extra={
+            "experiment_id": experiment_id,
+            "source_config": str(Path(args.config).resolve()),
+            "seed": config.seed,
+            "reads": args.reads,
+            "ablation_switches": ablation_switches,
+            "best_epoch": best_epoch,
+            "best_score": round(best_score, 4),
+        },
+    )
+    common.print_report(report)
+    torch.save(
+        {
+            "epoch": args.epochs,
+            "model_state_dict": model.state_dict(),
+            "metrics": logger.history[-1] if logger.history else {},
+            "best_epoch": best_epoch,
+            "best_score": best_score,
+            "config": config.to_dict(),
+            "experiment_id": experiment_id,
+        },
+        out_dir / "final.pt",
+    )
 
 
 if __name__ == "__main__":

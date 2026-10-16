@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
+import warnings
 
 # 支持直接执行 `python scripts/infer.py`，无需依赖当前工作目录的PYTHONPATH。
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -43,8 +44,31 @@ def main() -> None:
     stats.validate()
     device = resolve_device(args.device or config.device)
 
-    # checkpoint = torch.load(args.checkpoint, map_location=device)
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    checkpoint_config = checkpoint.get("config")
+    if checkpoint_config is None or "model" not in checkpoint_config:
+        warnings.warn(
+            "checkpoint未包含模型配置，无法验证其与当前YAML是否一致",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    else:
+        checkpoint_model_config = checkpoint_config["model"]
+        current_model_config = config.to_dict()["model"]
+        differences = {
+            key: {
+                "checkpoint": checkpoint_model_config.get(key),
+                "config": current_model_config.get(key),
+            }
+            for key in sorted(set(checkpoint_model_config) | set(current_model_config))
+            if checkpoint_model_config.get(key) != current_model_config.get(key)
+        }
+        if differences:
+            raise ValueError(
+                "checkpoint模型配置与当前YAML不一致: "
+                + json.dumps(differences, ensure_ascii=False, sort_keys=True)
+            )
+
     model = SwinMatrixTransformer(config.data.matrix_size, config.model).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
@@ -81,7 +105,16 @@ def main() -> None:
             ]
         )
         metrics_path = Path(args.output).with_suffix(".metrics.json")
-        metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+        payload = {
+            "summary": metrics,
+            "provenance": {
+                "experiment_id": checkpoint.get("experiment_id"),
+                "config": str(Path(args.config).resolve()),
+                "checkpoint": str(Path(args.checkpoint).resolve()),
+                "normalization": str(Path(args.stats).resolve()),
+            },
+        }
+        metrics_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"metrics: {json.dumps(metrics, ensure_ascii=False)}")
 
 
