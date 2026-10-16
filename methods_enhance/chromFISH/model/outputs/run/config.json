@@ -1,0 +1,62 @@
+{
+  "seed": 100,
+  "device": "auto",
+  "output_dir": "outputs/run",
+  "data": {
+    "train_dir": "/home/xukang/_tangcheng/swir_hic_recon/data/train",
+    "valid_dir": "/home/xukang/_tangcheng/swir_hic_recon/data/valid",
+    "test_dir": "/home/xukang/_tangcheng/swir_hic_recon/data/test",
+    "source_filename": "dawn_sampled_300.npy",
+    "target_filename": "ground_distance_normalized.npy",
+    "matrix_size": 64,
+    "batch_size": 8,
+    "eval_batch_size": 16,
+    "num_workers": 4
+  },
+  "model": {
+    "in_chans": 1,
+    "embed_dim": 64,
+    "patch_size": 1,
+    "patch_norm": true,
+    "depths": [
+      4,
+      4,
+      4,
+      4,
+      4,
+      4
+    ],
+    "num_heads": [
+      4,
+      4,
+      4,
+      4,
+      4,
+      4
+    ],
+    "window_size": 4,
+    "mlp_ratio": 2.0,
+    "dropout": 0.1,
+    "drop_path_rate": 0.1
+  },
+  "loss": {
+    "lambda_mse": 1.0,
+    "lambda_corr": 0.2,
+    "lambda_structure": 0.1,
+    "lambda_ssim": 0.8
+  },
+  "optimizer": {
+    "name": "adamw",
+    "learning_rate": 0.001,
+    "weight_decay": 0.05,
+    "min_learning_rate": 1e-05,
+    "warm_restart_period": 10
+  },
+  "training": {
+    "epochs": 100,
+    "validate_every": 5,
+    "gradient_clip_norm": 1.0,
+    "amp": true,
+    "save_last": true
+  }
+}

@@ -1,0 +1,22 @@
+# 只跟踪 chromFISH(我们的方法)和 shared(它依赖的共用代码)。
+# 数据、baseline 仓库、模型权重、预测结果都不入库 —— 它们要么太大, 要么能重跑出来。
+#
+# 注意: git 不会进入被忽略的目录, 所以父目录链必须逐级放行, 否则
+# 下面的 !/methods_enhance/chromFISH/ 是够不着的。
+
+/*
+!/methods_enhance/
+/methods_enhance/*
+!/methods_enhance/chromFISH/
+!/methods_enhance/shared/
+!/.gitignore
+
+# 大文件与缓存
+*.pt
+*.pth
+*.pytorch
+*.npy
+*.npz
+__pycache__/
+*.pyc
+.DS_Store

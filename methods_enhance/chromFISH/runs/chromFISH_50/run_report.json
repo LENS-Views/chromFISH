@@ -1,0 +1,15 @@
+{
+  "method": "chromFISH",
+  "epochs": 100,
+  "steps_per_epoch": 128,
+  "total_steps": 12800,
+  "batch_size": 32,
+  "params": 1216481,
+  "wall_seconds": 2787.8,
+  "sec_per_epoch": 27.88,
+  "peak_gpu_mb": 8058.7,
+  "device": "cuda",
+  "gpu_name": "NVIDIA A100-PCIE-40GB",
+  "reads": 50,
+  "best_score": 1.0348
+}
